@@ -19,7 +19,6 @@ from webGuard.charts import *
 from webGuard.common_func import *
 from webGuard.definitions import ABORTED_TASK, SUCCESS_TASK
 from webGuard.tasks import create_scan_activity, initiate_scan, run_command
-from scanEngine.models import EngineType
 from startScan.models import *
 from targetApp.models import *
 
@@ -34,7 +33,6 @@ def subscan_history(request, slug):
     subscans = SubScan.objects.filter(scan_history__domain__project__slug=slug).order_by('-start_scan_date')
     context = {'scan_history_active': 'active', "subscans": subscans}
     return render(request, 'startScan/subscan_history.html', context)
-
 
 def detail_scan(request, id, slug):
     ctx = {}
@@ -214,10 +212,8 @@ def detail_scan(request, id, slug):
 
     return render(request, 'startScan/detail_scan.html', ctx)
 
-
 def all_subdomains(request, slug):
     subdomains = Subdomain.objects.filter(target_domain__project__slug=slug)
-    scan_engines = EngineType.objects.order_by('engine_name').all()
     alive_subdomains = subdomains.filter(http_status__exact=200) # TODO: replace this with is_alive() function
     important_subdomains = (
         subdomains
@@ -319,13 +315,7 @@ def start_scan_ui(request, slug, domain_id):
         subdomains_out = getattr(previous_scan, 'cfg_out_of_scope_subdomains', None)
         starting_point_path = getattr(previous_scan, 'cfg_starting_point_path', None)
         excluded_paths = getattr(previous_scan, 'cfg_excluded_paths', None)
-
-    engines = EngineType.objects.order_by('engine_name')
-    custom_engines_count = (
-        EngineType.objects
-        .filter(default_engine=False)
-        .count()
-    )
+   
     excluded_paths = ','.join(DEFAULT_EXCLUDED_PATHS) if not excluded_paths else ','.join(excluded_paths)
 
     # context values
@@ -333,7 +323,6 @@ def start_scan_ui(request, slug, domain_id):
         'scan_history_active': 'active',
         'domain': domain,
         'engines': engines,
-        'custom_engines_count': custom_engines_count,
         'excluded_paths': excluded_paths,
         'subdomains_in': subdomains_in,
         'subdomains_out': subdomains_out,
@@ -412,19 +401,11 @@ def start_multiple_scan(request, slug):
             domain_ids = ",".join(list_of_domain_id)
 
     # GET request
-    engines = EngineType.objects
-    custom_engine_count = (
-        engines
-        .filter(default_engine=False)
-        .count()
-    )
     excluded_paths = ','.join(DEFAULT_EXCLUDED_PATHS)
     context = {
         'scan_history_active': 'active',
-        'engines': engines,
         'domain_list': list_of_domain_name,
         'domain_ids': domain_ids,
-        'custom_engine_count': custom_engine_count,
         'excluded_paths': excluded_paths
     }
     return render(request, 'startScan/start_multiple_scan_ui.html', context)
@@ -595,9 +576,7 @@ def schedule_scan(request, host_id, slug):
         excluded_paths = [path.strip() for path in excluded_paths.split(',')]
 
         # Get engine type
-        engine = get_object_or_404(EngineType, id=engine_type)
         timestr = str(datetime.strftime(timezone.now(), '%Y_%m_%d_%H_%M_%S'))
-        task_name = f'{engine.engine_name} for {domain.name}: {timestr}'
         if scheduled_mode == 'periodic':
             frequency_value = int(request.POST['frequency'])
             frequency_type = request.POST['frequency_type']
@@ -618,7 +597,6 @@ def schedule_scan(request, host_id, slug):
                 period=period)
             kwargs = {
                 'domain_id': host_id,
-                'engine_id': engine.id,
                 'scan_history_id': 1,
                 'scan_type': SCHEDULED_SCAN,
                 'imported_subdomains': subdomains_in,
@@ -629,7 +607,6 @@ def schedule_scan(request, host_id, slug):
             }
             PeriodicTask.objects.create(
                 interval=schedule,
-                name=task_name,
                 task='initiate_scan',
                 kwargs=json.dumps(kwargs)
             )
@@ -640,7 +617,6 @@ def schedule_scan(request, host_id, slug):
             kwargs = {
                 'scan_history_id': 0,
                 'domain_id': host_id,
-                'engine_id': engine.id,
                 'scan_type': SCHEDULED_SCAN,
                 'imported_subdomains': subdomains_in,
                 'out_of_scope_subdomains': subdomains_out,
@@ -651,7 +627,6 @@ def schedule_scan(request, host_id, slug):
             PeriodicTask.objects.create(
                 clocked=clock,
                 one_off=True,
-                name=task_name,
                 task='initiate_scan',
                 kwargs=json.dumps(kwargs)
             )
@@ -663,18 +638,10 @@ def schedule_scan(request, host_id, slug):
         return HttpResponseRedirect(reverse('scheduled_scan_view', kwargs={'slug': slug}))
 
     # GET request
-    engines = EngineType.objects
-    custom_engine_count = (
-        engines
-        .filter(default_engine=False)
-        .count()
-    )
     excluded_paths = ','.join(DEFAULT_EXCLUDED_PATHS)
     context = {
         'scan_history_active': 'active',
         'domain': domain,
-        'engines': engines,
-        'custom_engine_count': custom_engine_count,
         'excluded_paths': excluded_paths
     }
     return render(request, 'startScan/schedule_scan_ui.html', context)
@@ -829,8 +796,6 @@ def start_organization_scan(request, id, slug):
         return HttpResponseRedirect(reverse('scan_history', kwargs={'slug': slug}))
 
     # GET request
-    engine = EngineType.objects.order_by('engine_name')
-    custom_engine_count = EngineType.objects.filter(default_engine=False).count()
     domain_list = organization.get_domains()
     excluded_paths = ','.join(DEFAULT_EXCLUDED_PATHS)
 
@@ -838,9 +803,7 @@ def start_organization_scan(request, id, slug):
         'organization_data_active': 'true',
         'list_organization_li': 'active',
         'organization': organization,
-        'engines': engine,
         'domain_list': domain_list,
-        'custom_engine_count': custom_engine_count,
         'excluded_paths': excluded_paths
     }
     return render(request, 'organization/start_scan.html', context)
@@ -851,7 +814,6 @@ def schedule_organization_scan(request, slug, id):
     organization =Organization.objects.get(id=id)
     if request.method == "POST":
         engine_type = int(request.POST['scan_mode'])
-        engine = get_object_or_404(EngineType, id=engine_type)
 
         # post vars
         scheduled_mode = request.POST['scheduled_mode']
@@ -941,15 +903,11 @@ def schedule_organization_scan(request, slug, id):
         return HttpResponseRedirect(reverse('scheduled_scan_view', kwargs={'slug': slug}))
 
     # GET request
-    engine = EngineType.objects
-    custom_engine_count = EngineType.objects.filter(default_engine=False).count()
     excluded_paths = ','.join(DEFAULT_EXCLUDED_PATHS)
     context = {
         'scan_history_active': 'active',
         'organization': organization,
         'domain_list': organization.get_domains(),
-        'engines': engine,
-        'custom_engine_count': custom_engine_count,
         'excluded_paths': excluded_paths
     }
     return render(request, 'organization/schedule_scan_ui.html', context)
